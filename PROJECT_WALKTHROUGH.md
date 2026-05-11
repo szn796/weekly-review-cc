@@ -18,10 +18,11 @@
 1. 你启动一个 TypeScript CLI 程序
 2. 这个程序调用 `Claude Agent SDK`
 3. SDK 让模型自己调用受控的 `git` 工具读取仓库提交
-4. 模型把读到的内容整理成中文 Markdown 周报
-5. 主程序把周报打印到终端，并保存成文件
+4. resolver agent 先把模糊仓库和时间解析出来
+5. report agent 再读取 git 并整理成中文 Markdown 周报
+6. 主程序把周报打印到终端，并保存成文件
 
-默认项目是 `weass-b-mono`，也可以通过 `--repo=<关键词>` 在 `/Users/sunzhennan/Desktop/Code` 一级目录里模糊匹配其他 Git 仓库。
+默认兜底项目是 `weass-b-mono`，也可以通过 `--repo=<关键词>` 在 `/Users/sunzhennan/Desktop/Code` 里模糊匹配其他 Git 仓库。
 
 所以它的重点不是“我手写了多少 git 统计规则”，而是：
 
@@ -62,14 +63,14 @@ TypeScript 就是“带类型的 JavaScript”。
 - 管理工具调用
 - 把结果事件流回传给你的程序
 
-### 2.5 百炼 Anthropic 兼容接口是什么
+### 2.5 Kimi Coding Plan Anthropic 兼容接口是什么
 
-这个项目虽然用的是 `Claude Agent SDK`，但底层模型服务不是直接走 Claude 官方接口，而是走百炼提供的 Anthropic 兼容接口。
+这个项目虽然用的是 `Claude Agent SDK`，但底层模型服务不是直接走 Claude 官方接口，而是走 Kimi Coding Plan 提供的 Anthropic 兼容接口。
 
 也就是：
 
 - agent 框架是 `Claude Agent SDK`
-- 模型服务是百炼
+- 模型服务是 Kimi Coding Plan
 
 ## 3. 项目目录怎么看
 
@@ -141,18 +142,30 @@ npm install
 - `Claude Agent SDK`
 - TypeScript 编译相关依赖
 
-### 第 4 步：准备百炼配置
+### 第 4 步：准备 Kimi 配置
 
 这个项目现在会自动读取根目录的 `.env`，所以如果 `.env` 已经写好了，通常不需要每次手动 `export`。
 
 如果你想临时覆盖，也可以这样：
 
 ```bash
-export BAILIAN_API_KEY="你的百炼 API Key"
-export BAILIAN_MODEL="qwen3.5-plus"
+export KIMI_API_KEY="你的 Kimi Coding Plan API Key"
+export KIMI_MODEL="kimi-for-coding"
 ```
 
 ### 第 5 步：运行周报命令
+
+```bash
+npm run report
+```
+
+随后在终端输入一句自然语言，例如：
+
+```text
+帮我看下 weass b 上周提交
+```
+
+如果你已经把项目和时间都写死，也可以直接跳过 resolver：
 
 ```bash
 npm run report -- --repo=weass-b --since=2026-03-30 --until=2026-04-01
@@ -165,10 +178,10 @@ npm run report -- --repo=weass-b --since=2026-03-30 --until=2026-04-01
 
 ## 5. 先从命令入口理解整个链路
 
-你平时执行的是：
+你平时可能执行的是：
 
 ```bash
-npm run report -- --repo=weass-b --since=2026-03-30 --until=2026-04-01
+npm run report
 ```
 
 这条命令真正对应的是 [package.json](./package.json)：
@@ -196,7 +209,7 @@ npm run report -- --repo=weass-b --since=2026-03-30 --until=2026-04-01
 
 ```mermaid
 flowchart TD
-    A["你在终端执行<br/>npm run report -- --repo=weass-b --since=2026-03-30 --until=2026-04-01"] --> B["package.json 的 report 脚本启动"]
+    A["你在终端执行<br/>npm run report"] --> B["package.json 的 report 脚本启动"]
     B --> C["先执行 npm run build"]
     C --> D["TypeScript 编译器把 src/*.ts 编译成 dist/*.js"]
     D --> E["执行 node dist/index.js"]
@@ -204,20 +217,21 @@ flowchart TD
     F --> G["检查 Node 版本"]
     G --> H["解析命令行参数<br/>读取 repo / since / until / help"]
     H --> I["读取项目 .env"]
-    I --> J["prepareRuntimeConfig()<br/>读取百炼 Key<br/>强制设置百炼网关<br/>选择模型"]
-    J --> K["resolveRepoPath()<br/>默认项目或模糊匹配仓库"]
-    K --> L["ensureGitRepo()<br/>检查目标目录存在且是 Git 仓库"]
-    L --> M["resolveDateRange()<br/>计算实际时间范围"]
-    M --> N["buildSystemPrompt() + buildUserPrompt()<br/>生成给 agent 的提示词"]
-    N --> O["query(...options)<br/>调用 Claude Agent SDK"]
-    O --> P["Agent 在受控权限下工作<br/>只允许 Bash(git:*) 和 Read"]
-    P --> Q["Agent 执行 git log<br/>拿到时间范围内的非合并提交"]
-    Q --> R["Agent 执行 git show --stat --name-only<br/>读取每个提交影响文件"]
-    R --> S["Agent 对重点提交进一步读取 patch"]
-    S --> T["Agent 生成中文 Markdown 周报"]
-    T --> U["主程序接收 result 事件"]
-    U --> V["终端打印报告"]
-    V --> W["写入 reports/weekly-summary-项目-开始日期-to-结束日期.md"]
+    I --> J["prepareRuntimeConfig()<br/>读取 Kimi Key<br/>强制设置 Kimi 网关<br/>选择模型"]
+    J --> K["resolveAnalysisContext()<br/>判断是否需要 resolver agent"]
+    K --> L["collectUserIntent()<br/>必要时读取一句模糊需求"]
+    L --> M["resolver agent 运行<br/>解析仓库 + 时间<br/>必要时先追问"]
+    M --> N["ensureGitRepo() + resolveDateRange()<br/>得到最终分析上下文"]
+    N --> O["buildSystemPrompt() + buildUserPrompt()<br/>生成 report agent 提示词"]
+    O --> P["query(...options)<br/>调用 Claude Agent SDK"]
+    P --> Q["report agent 在受控权限下工作<br/>只允许 Bash(git:*) 和 Read"]
+    Q --> R["report agent 执行 git log<br/>拿到时间范围内的非合并提交"]
+    R --> S["report agent 执行 git show --stat --name-only<br/>读取每个提交影响文件"]
+    S --> T["report agent 对重点提交进一步读取 patch"]
+    T --> U["report agent 生成中文 Markdown 周报"]
+    U --> V["主程序接收 result 事件"]
+    V --> W["终端打印报告"]
+    W --> X["写入 reports/weekly-summary-项目-开始日期-to-结束日期.md"]
 ```
 
 ## 7. 真正开始读源码时，先从哪里看
@@ -270,7 +284,7 @@ main().catch(error => {
 1. `import`
    引入 Node 内置能力、Claude Agent SDK、本地模块
 2. 常量
-   比如默认仓库路径、默认百炼网关、默认模型、项目根目录、报告目录
+   比如默认仓库路径、默认 Kimi 网关、默认模型、项目根目录、报告目录
 3. 类型
    比如 `CliArgs` 和 `SdkEvent`
 
@@ -381,13 +395,13 @@ await loadProjectEnvFile();
 const runtimeConfig = prepareRuntimeConfig();
 ```
 
-这是整个项目“稳定跑在百炼上”的关键步骤。
+这是整个项目“稳定跑在 Kimi Coding Plan 上”的关键步骤。
 
 它会：
 
-1. 读取 `BAILIAN_API_KEY`
+1. 读取 `KIMI_API_KEY`
 2. 在程序内部映射成 SDK 习惯读取的 `ANTHROPIC_*` 变量
-3. 强制把网关锁死到百炼
+3. 强制把网关锁死到 Kimi Coding Plan
 4. 确定模型名称
 
 为什么要强制锁死网关。
@@ -559,7 +573,7 @@ const stream = query({
 - `systemPrompt`
   长期规则
 - `model`
-  实际使用的百炼模型
+  实际使用的 Kimi 模型
 
 最重要的一点是：
 
@@ -611,22 +625,22 @@ if (!markdown) {
 
 ## 10. `prepareRuntimeConfig()` 在解决什么问题
 
-这部分是整个项目“适配百炼”的关键。
+这部分是整个项目“适配 Kimi Coding Plan”的关键。
 
 它现在只读取一个对使用者最直观的变量名：
 
-- `BAILIAN_API_KEY`
+- `KIMI_API_KEY`
 
 然后它会：
 
 1. 把 key 同时写到 `ANTHROPIC_API_KEY`
 2. 把 key 同时写到 `ANTHROPIC_AUTH_TOKEN`
 3. 强制设置 `ANTHROPIC_BASE_URL`
-4. 读取 `BAILIAN_MODEL`，没有就用默认值 `qwen3.5-plus`
+4. 读取 `KIMI_MODEL`，没有就用默认值 `kimi-for-coding`
 
 为什么要这么做。
 
-因为 `Claude Agent SDK` 默认是 Anthropic 风格，而你现在实际上走的是百炼兼容接口，所以需要由程序内部做一层最小映射。但对外只保留一个变量名，项目会更简单。
+因为 `Claude Agent SDK` 默认是 Anthropic 风格，而你现在实际上走的是 Kimi Coding Plan 兼容接口，所以需要由程序内部做一层最小映射。但对外只保留一个变量名，项目会更简单。
 
 ## 11. `loadProjectEnvFile()` 相关逻辑在解决什么问题
 
@@ -894,7 +908,7 @@ nvm use
 
 意思是：
 
-- 没在 `.env` 或当前终端里配百炼 key
+- 没在 `.env` 或当前终端里配 Kimi key
 
 ### 报错：目标路径不存在
 
@@ -914,13 +928,13 @@ nvm use
 
 这通常不是参数格式错，而是模型在多轮工具调用后没有吐出最终文本结果。
 
-在“Claude Agent SDK + 百炼兼容模型”这条组合里，复杂多轮场景的稳定性有时不如 Claude 原生。
+在“Claude Agent SDK + Kimi 兼容模型”这条组合里，复杂多轮场景的稳定性有时不如 Claude 原生。
 
 ## 19. 你做分享时可以怎么解释这个项目
 
 最短版本：
 
-“我做了一个基于 Claude Agent SDK 的 CLI agent。默认分析 `weass-b-mono`，也支持通过 `--repo=<关键词>` 模糊匹配其他本地仓库，让 agent 自己调用 git 工具分析，再生成一份中文周报。底层模型走百炼的 Anthropic 兼容接口。”
+“我做了一个基于 Claude Agent SDK 的 CLI agent。默认分析 `weass-b-mono`，也支持通过 `--repo=<关键词>` 模糊匹配其他本地仓库，让 agent 自己调用 git 工具分析，再生成一份中文周报。底层模型走 Kimi Coding Plan 的 Anthropic 兼容接口。”
 
 稍微展开一点：
 
@@ -943,8 +957,8 @@ npm run report -- --repo=weass-b --since=2026-03-30 --until=2026-04-01
 如果 `.env` 没写好，再补：
 
 ```bash
-export BAILIAN_API_KEY="你的百炼 API Key"
-export BAILIAN_MODEL="qwen3.5-plus"
+export KIMI_API_KEY="你的 Kimi Coding Plan API Key"
+export KIMI_MODEL="kimi-for-coding"
 ```
 
 运行完成后，打开这里看报告：
@@ -959,7 +973,7 @@ export BAILIAN_MODEL="qwen3.5-plus"
 
 - 用 TypeScript 写了一个宿主程序
 - 用 Claude Agent SDK 启动一个受控 agent
-- 用百炼兼容接口提供模型能力
+- 用 Kimi Coding Plan 兼容接口提供模型能力
 - 让 agent 自己分析 git 提交并生成周报
 
 如果你能把这 4 句话讲清楚，再把 `main()` 那条主线说顺，这个项目你就已经真正理解了。
